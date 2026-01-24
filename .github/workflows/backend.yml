@@ -23,10 +23,10 @@ jobs:
           chmod 600 ~/.ssh/key.pem
 
           ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST << 'EOF'
-            cd /home/ubuntu/backend
+            cd /home/ubuntu/business-api
             git pull origin main
             npm install --production
-            pm2 restart backend || pm2 start server.js --name backend
+            pm2 restart backend || pm2 start server.js --name business-api
             pm2 save
           EOF
 
