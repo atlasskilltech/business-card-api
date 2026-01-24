@@ -56,10 +56,19 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
       [cardId]
     );
 
+    const card = cards[0];
+
+  // ✅ FIX: convert relative path to full URL
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+    card.image_url = card.image_url
+      ? `${baseUrl}${card.image_url}`
+      : null;
+
     res.json({
       success: true,
       message: 'Card scanned successfully',
-      card: cards[0]
+      card
     });
 
   } catch (error) {
