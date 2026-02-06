@@ -20,7 +20,7 @@ class MistralService {
       // Determine mime type
       const ext = imagePath.split('.').pop().toLowerCase();
       const mimeTypes = {
-        'jpg': 'image/jpeg',
+        'jpg': 'image/jpg',
         'jpeg': 'image/jpeg',
         'png': 'image/png',
         'webp': 'image/webp'
