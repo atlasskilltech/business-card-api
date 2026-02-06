@@ -12,17 +12,31 @@ const path = require('path');
 // @access  Private
 router.post('/scan', authenticate, upload.single('card'), handleUploadError, async (req, res) => {
   try {
+    console.log('📸 Scan card request received');
+    console.log('User ID:', req.user.id);
+    console.log('File uploaded:', req.file ? 'Yes' : 'No');
+    
     if (!req.file) {
+      console.error('❌ No file in request');
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
+
+    console.log('✅ File details:', {
+      filename: req.file.filename,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+      path: req.file.path
+    });
 
     const imagePath = req.file.path;
     const imageUrl = `/uploads/${req.file.filename}`;
 
     // Extract info using Mistral AI
+    console.log('🤖 Processing image with Mistral AI...');
     const extractionResult = await mistralService.extractCardInfo(imagePath);
 
     if (!extractionResult.success) {
+      console.error('❌ Mistral extraction failed:', extractionResult.error);
       return res.status(500).json({
         success: false,
         message: 'Failed to extract card information',
@@ -30,7 +44,10 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
       });
     }
 
+    console.log('✅ Mistral extraction successful:', extractionResult.data);
+
     // Save to database
+    console.log('💾 Saving to database...');
     const [result] = await pool.query(
       `INSERT INTO business_cards 
        (user_id, name, email, phone, company, job_title, address, website, image_url)
@@ -49,6 +66,7 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
     );
 
     const cardId = result.insertId;
+    console.log('✅ Card saved with ID:', cardId);
 
     // Get the created card
     const [cards] = await pool.query(
@@ -58,12 +76,13 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
 
     const card = cards[0];
 
-  // ✅ FIX: convert relative path to full URL
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
-
+    // ✅ FIX: convert relative path to full URL
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     card.image_url = card.image_url
       ? `${baseUrl}${card.image_url}`
       : null;
+
+    console.log('🎉 Scan complete! Returning card data');
 
     res.json({
       success: true,
@@ -72,7 +91,8 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
     });
 
   } catch (error) {
-    console.error('Scan card error:', error);
+    console.error('❌ Scan card error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       success: false, 
       message: 'Failed to scan card',
