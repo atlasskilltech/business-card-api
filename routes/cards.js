@@ -35,6 +35,18 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
     console.log('🤖 Processing image with Mistral AI...');
     const extractionResult = await mistralService.extractCardInfo(imagePath);
 
+    // Check for rate limit
+    if (extractionResult.rateLimited) {
+      console.error('❌ Rate limit exceeded');
+      return res.status(429).json({
+        success: false,
+        message: 'Mistral AI rate limit exceeded. Please wait a few minutes and try again.',
+        error: 'Rate limit exceeded',
+        rateLimited: true,
+        help: 'Free tier: 5 requests/minute. Wait 60 seconds or upgrade at console.mistral.ai'
+      });
+    }
+
     if (!extractionResult.success) {
       console.error('❌ Mistral extraction failed:', extractionResult.error);
       
@@ -53,6 +65,11 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
         message: 'Failed to extract card information',
         error: extractionResult.error
       });
+    }
+
+    // Check if fallback was used
+    if (extractionResult.fallback) {
+      console.log('⚠️  Using fallback - manual entry required');
     }
 
     console.log('✅ Mistral extraction successful:', extractionResult.data);
