@@ -10,9 +10,12 @@ class MistralService {
 
   async extractCardInfo(imagePath) {
     try {
+      console.log('🔍 Reading image file:', imagePath);
+      
       // Read image file and convert to base64
       const imageBuffer = fs.readFileSync(imagePath);
       const base64Image = imageBuffer.toString('base64');
+      console.log('✅ Image converted to base64, size:', imageBuffer.length, 'bytes');
 
       // Determine mime type
       const ext = imagePath.split('.').pop().toLowerCase();
@@ -23,6 +26,7 @@ class MistralService {
         'webp': 'image/webp'
       };
       const mimeType = mimeTypes[ext] || 'image/jpeg';
+      console.log('📄 Detected mime type:', mimeType);
 
       // Prepare the prompt for business card extraction
       const prompt = `You are an expert at extracting information from business cards. Analyze this business card image and extract the following information in JSON format ONLY (no other text):
@@ -47,6 +51,8 @@ IMPORTANT RULES:
 
 Analyze the business card now:`;
 
+      console.log('🚀 Sending request to Mistral AI...');
+      
       // Make API request to Mistral Vision API using axios
       const response = await axios.post(
         this.apiUrl,
@@ -79,12 +85,16 @@ Analyze the business card now:`;
         }
       );
 
+      console.log('✅ Received response from Mistral AI');
+
       // Extract the text response
       const generatedText = response.data?.choices?.[0]?.message?.content;
       
       if (!generatedText) {
         throw new Error('No response from Mistral AI');
       }
+
+      console.log('📝 Raw Mistral response:', generatedText);
 
       // Clean the response - remove markdown code blocks if present
       let cleanedText = generatedText.trim();
@@ -95,10 +105,12 @@ Analyze the business card now:`;
       // Parse JSON from response
       const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        console.error('❌ Could not find JSON in response:', cleanedText);
         throw new Error('Could not extract JSON from response');
       }
 
       const extractedData = JSON.parse(jsonMatch[0]);
+      console.log('✅ Parsed JSON data:', extractedData);
 
       // Clean and validate data
       const cleanedData = {
@@ -111,13 +123,16 @@ Analyze the business card now:`;
         website: this.cleanWebsite(extractedData.website)
       };
 
+      console.log('🎉 Final cleaned data:', cleanedData);
+
       return {
         success: true,
         data: cleanedData
       };
 
     } catch (error) {
-      console.error('Mistral extraction error:', error.response?.data || error.message);
+      console.error('❌ Mistral extraction error:', error.message);
+      console.error('Error details:', error.response?.data || error.stack);
       
       return {
         success: false,
