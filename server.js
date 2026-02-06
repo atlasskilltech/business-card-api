@@ -21,6 +21,29 @@ app.use(cors({
   credentials: true
 }));
 
+// Configure CORS
+const corsOptions = {
+  origin: 'https://business-card.atlasskilltech.app',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+};
+
+app.use(cors(corsOptions));
+
+// Add security headers
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+});
+
+// Serve uploads with CORS
+app.use('/uploads', express.static('uploads', {
+  setHeaders: (res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
+}));
+
 // Body parser
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
