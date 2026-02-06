@@ -37,6 +37,17 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
 
     if (!extractionResult.success) {
       console.error('❌ Mistral extraction failed:', extractionResult.error);
+      
+      // Check if it's an API key issue
+      if (extractionResult.error && extractionResult.error.includes('API key')) {
+        return res.status(500).json({
+          success: false,
+          message: 'Mistral AI API key is not configured. Please set MISTRAL_API_KEY in backend/.env',
+          error: 'API key missing or invalid',
+          help: 'Get your API key from https://console.mistral.ai'
+        });
+      }
+      
       return res.status(500).json({
         success: false,
         message: 'Failed to extract card information',
