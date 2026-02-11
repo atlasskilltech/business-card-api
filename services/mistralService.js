@@ -85,7 +85,7 @@ Analyze the business card now:`;
               }
             ],
             temperature: 0.1,
-            max_tokens: 500
+            max_tokens: 250
           },
           {
             headers: {
