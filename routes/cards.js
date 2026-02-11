@@ -3,7 +3,7 @@ const router = express.Router();
 const { pool } = require('../config/database');
 const authenticate = require('../middleware/authenticate');
 const { upload, handleUploadError } = require('../middleware/upload');
-const mistralService = require('../services/mistralService');
+const openaiService = require('../services/openaiService');
 const googleContactsService = require('../services/googleContactsService');
 const path = require('path');
 
@@ -33,8 +33,8 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
 
     // Extract info using Mistral AI
     console.log('🤖 Processing image with Mistral AI...');
-    const extractionResult = await mistralService.extractCardInfo(imagePath);
-
+    //const extractionResult = await mistralService.extractCardInfo(imagePath);
+    const extractionResult = await openaiService.extractCardInfo(imagePath);
     // Check for rate limit
     if (extractionResult.rateLimited) {
       console.error('❌ Rate limit exceeded');
