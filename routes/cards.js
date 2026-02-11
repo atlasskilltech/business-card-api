@@ -3,7 +3,7 @@ const router = express.Router();
 const { pool } = require('../config/database');
 const authenticate = require('../middleware/authenticate');
 const { upload, handleUploadError } = require('../middleware/upload');
-const openaiService = require('../services/openaiService');
+const openaiService = require('../services/openaiService'); // ✅ Changed from mistralService
 const googleContactsService = require('../services/googleContactsService');
 const path = require('path');
 
@@ -31,32 +31,32 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
     const imagePath = req.file.path;
     const imageUrl = `/uploads/${req.file.filename}`;
 
-    // Extract info using Mistral AI
-    console.log('🤖 Processing image with Mistral AI...');
-    //const extractionResult = await mistralService.extractCardInfo(imagePath);
+    // Extract info using OpenAI Vision ✅
+    console.log('🤖 Processing image with OpenAI GPT-4o Vision...');
     const extractionResult = await openaiService.extractCardInfo(imagePath);
+
     // Check for rate limit
     if (extractionResult.rateLimited) {
       console.error('❌ Rate limit exceeded');
       return res.status(429).json({
         success: false,
-        message: 'Mistral AI rate limit exceeded. Please wait a few minutes and try again.',
+        message: 'OpenAI rate limit exceeded. Please wait a moment and try again.',
         error: 'Rate limit exceeded',
         rateLimited: true,
-        help: 'Free tier: 5 requests/minute. Wait 60 seconds or upgrade at console.mistral.ai'
+        help: 'Add credits or check usage at https://platform.openai.com/account/billing'
       });
     }
 
     if (!extractionResult.success) {
-      console.error('❌ Mistral extraction failed:', extractionResult.error);
+      console.error('❌ OpenAI extraction failed:', extractionResult.error);
       
       // Check if it's an API key issue
       if (extractionResult.error && extractionResult.error.includes('API key')) {
         return res.status(500).json({
           success: false,
-          message: 'Mistral AI API key is not configured. Please set MISTRAL_API_KEY in backend/.env',
+          message: 'OpenAI API key is not configured. Please set OPENAI_API_KEY in backend/.env',
           error: 'API key missing or invalid',
-          help: 'Get your API key from https://console.mistral.ai'
+          help: 'Get your API key from https://platform.openai.com/api-keys'
         });
       }
       
@@ -72,7 +72,7 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
       console.log('⚠️  Using fallback - manual entry required');
     }
 
-    console.log('✅ Mistral extraction successful:', extractionResult.data);
+    console.log('✅ OpenAI extraction successful:', extractionResult.data);
 
     // Save to database
     console.log('💾 Saving to database...');
@@ -104,7 +104,7 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
 
     const card = cards[0];
 
-    // ✅ FIX: convert relative path to full URL
+    // ✅ Convert relative path to full URL
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     card.image_url = card.image_url
       ? `${baseUrl}${card.image_url}`
@@ -364,7 +364,7 @@ router.post('/batch-sync', authenticate, async (req, res) => {
   }
 });
 
-// @route   GET /api/cards/stats
+// @route   GET /api/cards/dashboard/stats
 // @desc    Get cards statistics
 // @access  Private
 router.get('/dashboard/stats', authenticate, async (req, res) => {
