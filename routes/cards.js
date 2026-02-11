@@ -3,19 +3,19 @@ const router = express.Router();
 const { pool } = require('../config/database');
 const authenticate = require('../middleware/authenticate');
 const { upload, handleUploadError } = require('../middleware/upload');
-const openaiService = require('../services/openaiService'); // ✅ Changed from mistralService
+const openaiService = require('../services/openaiService'); // ✅ Replaced mistralService
 const googleContactsService = require('../services/googleContactsService');
 const path = require('path');
 
 // @route   POST /api/cards/scan
 // @desc    Upload and scan business card
-// @access  Private neww
+// @access  Private
 router.post('/scan', authenticate, upload.single('card'), handleUploadError, async (req, res) => {
   try {
     console.log('📸 Scan card request received');
     console.log('User ID:', req.user.id);
     console.log('File uploaded:', req.file ? 'Yes' : 'No');
-    
+
     if (!req.file) {
       console.error('❌ No file in request');
       return res.status(400).json({ success: false, message: 'No file uploaded' });
@@ -25,106 +25,111 @@ router.post('/scan', authenticate, upload.single('card'), handleUploadError, asy
       filename: req.file.filename,
       size: req.file.size,
       mimetype: req.file.mimetype,
-      path: req.file.path
+      path: req.file.path,
     });
 
     const imagePath = req.file.path;
-    const imageUrl = `/uploads/${req.file.filename}`;
+    const imageUrl  = `/uploads/${req.file.filename}`;
 
-    // Extract info using OpenAI Vision ✅
-    console.log('🤖 Processing image with OpenAI GPT-4o Vision...');
+    // ── Extract info — single attempt, no retries ──────────────────────────
+    console.log('🤖 Processing image with OpenAI GPT-4o Vision (single attempt)...');
     const extractionResult = await openaiService.extractCardInfo(imagePath);
 
-    // Check for rate limit
+    // ── ✅ SUCCESS — save to DB and return immediately ─────────────────────
+    // This block runs ONLY when extraction worked (with or without fallback).
+    // Nothing retries after this point.
+    if (extractionResult.success) {
+
+      if (extractionResult.fallback) {
+        console.log('⚠️  Fallback mode — card saved with empty fields for manual entry');
+      } else {
+        console.log('✅ OpenAI extraction successful:', extractionResult.data);
+      }
+
+      // Save to database
+      console.log('💾 Saving to database...');
+      const [result] = await pool.query(
+        `INSERT INTO business_cards
+         (user_id, name, email, phone, company, job_title, address, website, image_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.id,
+          extractionResult.data.name,
+          extractionResult.data.email,
+          extractionResult.data.phone,
+          extractionResult.data.company,
+          extractionResult.data.job_title,
+          extractionResult.data.address,
+          extractionResult.data.website,
+          imageUrl,
+        ]
+      );
+
+      const cardId = result.insertId;
+      console.log('✅ Card saved with ID:', cardId);
+
+      // Fetch saved card
+      const [cards] = await pool.query(
+        'SELECT * FROM business_cards WHERE id = ?',
+        [cardId]
+      );
+
+      const card = cards[0];
+
+      // Convert relative path to full URL
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      card.image_url = card.image_url ? `${baseUrl}${card.image_url}` : null;
+
+      console.log('🎉 Scan complete — returning card data');
+
+      // ✅ RETURN HERE — done, no further processing
+      return res.json({
+        success: true,
+        message: extractionResult.fallback
+          ? 'Card saved — please fill in the details manually'
+          : 'Card scanned successfully',
+        card,
+      });
+    }
+
+    // ── ❌ EXTRACTION FAILED — no success, no retry ────────────────────────
+    console.error('❌ OpenAI extraction failed:', extractionResult.error);
+
+    // Rate limit
     if (extractionResult.rateLimited) {
-      console.error('❌ Rate limit exceeded');
       return res.status(429).json({
         success: false,
         message: 'OpenAI rate limit exceeded. Please wait a moment and try again.',
         error: 'Rate limit exceeded',
         rateLimited: true,
-        help: 'Add credits or check usage at https://platform.openai.com/account/billing'
+        help: 'Check usage at https://platform.openai.com/account/usage',
       });
     }
 
-    if (!extractionResult.success) {
-      console.error('❌ OpenAI extraction failed:', extractionResult.error);
-      
-      // Check if it's an API key issue
-      if (extractionResult.error && extractionResult.error.includes('API key')) {
-        return res.status(500).json({
-          success: false,
-          message: 'OpenAI API key is not configured. Please set OPENAI_API_KEY in backend/.env',
-          error: 'API key missing or invalid',
-          help: 'Get your API key from https://platform.openai.com/api-keys'
-        });
-      }
-      
+    // API key issue
+    if (extractionResult.error?.includes('API key')) {
       return res.status(500).json({
         success: false,
-        message: 'Failed to extract card information',
-        error: extractionResult.error
+        message: 'OpenAI API key is not configured. Set OPENAI_API_KEY in backend/.env',
+        error: 'API key missing or invalid',
+        help: 'Get your key at https://platform.openai.com/api-keys',
       });
     }
 
-    // Check if fallback was used
-    if (extractionResult.fallback) {
-      console.log('⚠️  Using fallback - manual entry required');
-    }
-
-    console.log('✅ OpenAI extraction successful:', extractionResult.data);
-
-    // Save to database
-    console.log('💾 Saving to database...');
-    const [result] = await pool.query(
-      `INSERT INTO business_cards 
-       (user_id, name, email, phone, company, job_title, address, website, image_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        req.user.id,
-        extractionResult.data.name,
-        extractionResult.data.email,
-        extractionResult.data.phone,
-        extractionResult.data.company,
-        extractionResult.data.job_title,
-        extractionResult.data.address,
-        extractionResult.data.website,
-        imageUrl
-      ]
-    );
-
-    const cardId = result.insertId;
-    console.log('✅ Card saved with ID:', cardId);
-
-    // Get the created card
-    const [cards] = await pool.query(
-      'SELECT * FROM business_cards WHERE id = ?',
-      [cardId]
-    );
-
-    const card = cards[0];
-
-    // ✅ Convert relative path to full URL
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    card.image_url = card.image_url
-      ? `${baseUrl}${card.image_url}`
-      : null;
-
-    console.log('🎉 Scan complete! Returning card data');
-
-    res.json({
-      success: true,
-      message: 'Card scanned successfully',
-      card
+    // Generic failure
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to extract card information',
+      error: extractionResult.error,
     });
 
   } catch (error) {
     console.error('❌ Scan card error:', error);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to scan card',
-      error: error.message 
+      error: error.message,
     });
   }
 });
@@ -151,7 +156,6 @@ router.get('/', authenticate, async (req, res) => {
 
     const [cards] = await pool.query(query, params);
 
-    // Get total count
     let countQuery = 'SELECT COUNT(*) as total FROM business_cards WHERE user_id = ?';
     const countParams = [req.user.id];
 
@@ -171,8 +175,8 @@ router.get('/', authenticate, async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         total,
-        pages: Math.ceil(total / limit)
-      }
+        pages: Math.ceil(total / limit),
+      },
     });
 
   } catch (error) {
@@ -223,7 +227,7 @@ router.put('/:id', authenticate, async (req, res) => {
       `UPDATE business_cards SET
         name = ?, email = ?, phone = ?, company = ?,
         job_title = ?, address = ?, website = ?, notes = ?
-      WHERE id = ? AND user_id = ?`,
+       WHERE id = ? AND user_id = ?`,
       [name, email, phone, company, job_title, address, website, notes, req.params.id, req.user.id]
     );
 
@@ -235,7 +239,7 @@ router.put('/:id', authenticate, async (req, res) => {
     res.json({
       success: true,
       message: 'Card updated successfully',
-      card: updatedCards[0]
+      card: updatedCards[0],
     });
 
   } catch (error) {
@@ -281,19 +285,16 @@ router.post('/:id/sync', authenticate, async (req, res) => {
     }
 
     const card = cards[0];
-
-    // Sync to Google Contacts
     const syncResult = await googleContactsService.syncContact(req.user.id, card);
 
     if (!syncResult.success) {
       return res.status(500).json({
         success: false,
         message: 'Failed to sync to Google Contacts',
-        error: syncResult.error
+        error: syncResult.error,
       });
     }
 
-    // Update card with sync info
     await pool.query(
       'UPDATE business_cards SET synced_to_google = TRUE, google_contact_id = ? WHERE id = ?',
       [syncResult.contactId, req.params.id]
@@ -302,16 +303,12 @@ router.post('/:id/sync', authenticate, async (req, res) => {
     res.json({
       success: true,
       message: 'Card synced to Google Contacts successfully',
-      contactId: syncResult.contactId
+      contactId: syncResult.contactId,
     });
 
   } catch (error) {
     console.error('Sync card error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to sync card',
-      error: error.message 
-    });
+    res.status(500).json({ success: false, message: 'Failed to sync card', error: error.message });
   }
 });
 
@@ -326,7 +323,6 @@ router.post('/batch-sync', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Card IDs are required' });
     }
 
-    // Get cards
     const placeholders = cardIds.map(() => '?').join(',');
     const [cards] = await pool.query(
       `SELECT * FROM business_cards WHERE id IN (${placeholders}) AND user_id = ?`,
@@ -337,10 +333,8 @@ router.post('/batch-sync', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, message: 'No cards found' });
     }
 
-    // Batch sync
     const results = await googleContactsService.batchSyncContacts(req.user.id, cards);
 
-    // Update synced cards
     for (const result of results) {
       if (result.success) {
         await pool.query(
@@ -355,7 +349,7 @@ router.post('/batch-sync', authenticate, async (req, res) => {
     res.json({
       success: true,
       message: `${successCount} out of ${results.length} cards synced successfully`,
-      results
+      results,
     });
 
   } catch (error) {
@@ -370,18 +364,15 @@ router.post('/batch-sync', authenticate, async (req, res) => {
 router.get('/dashboard/stats', authenticate, async (req, res) => {
   try {
     const [stats] = await pool.query(
-      `SELECT 
+      `SELECT
         COUNT(*) as total_cards,
         SUM(CASE WHEN synced_to_google = TRUE THEN 1 ELSE 0 END) as synced_cards,
         COUNT(DISTINCT DATE(created_at)) as active_days
-      FROM business_cards WHERE user_id = ?`,
+       FROM business_cards WHERE user_id = ?`,
       [req.user.id]
     );
 
-    res.json({
-      success: true,
-      stats: stats[0]
-    });
+    res.json({ success: true, stats: stats[0] });
 
   } catch (error) {
     console.error('Get stats error:', error);
