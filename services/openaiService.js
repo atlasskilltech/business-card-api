@@ -1,6 +1,6 @@
 // services/openaiService.js
+// ✅ NO RETRIES — returns immediately on success OR failure (single attempt)
 // Drop-in replacement for mistralService
-// Uses OpenAI GPT-4o Vision to extract business card info
 
 const OpenAI = require('openai');
 const fs = require('fs');
@@ -11,56 +11,61 @@ const openai = new OpenAI({
 });
 
 /**
- * Extract business card information from image
- * Same interface as mistralService.extractCardInfo()
+ * Extract business card info from image — SINGLE ATTEMPT, NO RETRIES
+ * Returns immediately on success. Only fails fast on real errors.
  *
- * @param {string} imagePath - Local file path to the uploaded image
- * @returns {Object} { success, data, fallback, rateLimited, error }
+ * @param {string} imagePath - Local file path to uploaded image
+ * @returns {{ success, data, fallback, rateLimited, error }}
  */
 const extractCardInfo = async (imagePath) => {
+
+  // ── 1. Validate API key ──────────────────────────────────────────────────
+  if (!process.env.OPENAI_API_KEY) {
+    return {
+      success: false,
+      error: 'OpenAI API key not configured. Set OPENAI_API_KEY in backend/.env — get one at https://platform.openai.com/api-keys',
+    };
+  }
+
+  if (!process.env.OPENAI_API_KEY.startsWith('sk-')) {
+    return {
+      success: false,
+      error: 'OpenAI API key invalid (must start with sk-). Check OPENAI_API_KEY in backend/.env',
+    };
+  }
+
+  // ── 2. Resolve & validate file path ─────────────────────────────────────
+  const resolvedPath = path.isAbsolute(imagePath)
+    ? imagePath
+    : path.resolve(process.cwd(), imagePath);
+
+  if (!fs.existsSync(resolvedPath)) {
+    return { success: false, error: `Image file not found: ${resolvedPath}` };
+  }
+
+  // ── 3. Read image ────────────────────────────────────────────────────────
+  const imageBuffer = fs.readFileSync(resolvedPath);
+  const mimeType    = detectMimeType(resolvedPath, imageBuffer);
+  const base64Image = imageBuffer.toString('base64');
+
+  console.log(`🤖 OpenAI GPT-4o Vision — single attempt (no retries)`);
+  console.log(`   File : ${path.basename(resolvedPath)}`);
+  console.log(`   Size : ${Math.round(imageBuffer.length / 1024)} KB`);
+  console.log(`   MIME : ${mimeType}`);
+
+  // ── 4. Call OpenAI — ONE TIME ONLY ──────────────────────────────────────
+  let response;
   try {
-    // Validate API key first
-    if (!process.env.OPENAI_API_KEY) {
-      console.error('❌ OPENAI_API_KEY is not set');
-      return {
-        success: false,
-        error: 'OpenAI API key is not configured. Please set OPENAI_API_KEY in backend/.env',
-      };
-    }
-
-    if (!process.env.OPENAI_API_KEY.startsWith('sk-')) {
-      console.error('❌ OPENAI_API_KEY appears invalid');
-      return {
-        success: false,
-        error: 'OpenAI API key appears invalid (should start with sk-). Get one at https://platform.openai.com/api-keys',
-      };
-    }
-
-    // Validate image file exists
-    if (!fs.existsSync(imagePath)) {
-      console.error('❌ Image file not found:', imagePath);
-      return {
-        success: false,
-        error: `Image file not found at path: ${imagePath}`,
-      };
-    }
-
-    // Read image and convert to base64
-    console.log('📖 Reading image from disk:', imagePath);
-    const imageBuffer = fs.readFileSync(imagePath);
-    const base64Image = imageBuffer.toString('base64');
-    const mimeType = getMimeType(imagePath);
-
-    console.log(`🤖 Sending to OpenAI GPT-4o Vision (${mimeType}, ${Math.round(imageBuffer.length / 1024)}KB)...`);
-
-    const response = await openai.chat.completions.create({
+    response = await openai.chat.completions.create({
       model: 'gpt-4o',
       max_tokens: 800,
       messages: [
         {
           role: 'system',
           content:
-            'You are an expert business card OCR assistant. Extract all visible contact information from business card images with high accuracy. Always return valid JSON only. Never include markdown, code blocks, or explanations.',
+            'You are an expert business card OCR assistant. ' +
+            'Extract contact information accurately. ' +
+            'Respond with valid JSON only. No markdown. No explanation.',
         },
         {
           role: 'user',
@@ -76,146 +81,132 @@ const extractCardInfo = async (imagePath) => {
               type: 'text',
               text: `Extract all contact information from this business card.
 
-Return ONLY this JSON object with no other text:
+Return ONLY this JSON object — no markdown, no code blocks, no explanation:
 {
-  "name": "full name of the person",
+  "name": "full name",
   "email": "email address",
   "phone": "primary phone number",
-  "company": "company or organization name",
+  "company": "company or organization",
   "job_title": "job title or designation",
-  "address": "full address if present",
+  "address": "full address",
   "website": "website URL"
 }
 
-Rules:
-- Return ONLY the JSON, no markdown, no code blocks, no explanation
 - Use empty string "" for any field not found on the card
-- Include country code in phone numbers if visible`,
+- Include country code in phone if visible`,
             },
           ],
         },
       ],
     });
+  } catch (apiError) {
+    // ── API call failed — classify error, NO RETRY ───────────────────────
+    console.error('❌ OpenAI API error:', apiError.message);
 
-    const rawText = response.choices[0]?.message?.content?.trim();
-    console.log('📝 OpenAI raw response:', rawText);
-
-    if (!rawText) {
-      return {
-        success: false,
-        error: 'Empty response from OpenAI',
-      };
+    if (apiError.status === 429 || apiError.message?.includes('rate_limit') || apiError.message?.includes('Rate limit')) {
+      return { success: false, rateLimited: true, error: 'OpenAI rate limit exceeded. Try again in a moment.' };
+    }
+    if (apiError.status === 401 || apiError.message?.includes('Incorrect API key')) {
+      return { success: false, error: 'Invalid OpenAI API key. Check OPENAI_API_KEY in .env' };
+    }
+    if (apiError.status === 402 || apiError.message?.includes('insufficient_quota')) {
+      return { success: false, rateLimited: true, error: 'OpenAI account out of credits. Add credits at https://platform.openai.com/account/billing' };
     }
 
-    // Parse JSON from response
-    const cardData = parseCardJSON(rawText);
-    console.log('✅ OpenAI extraction successful:', cardData);
-
-    return {
-      success: true,
-      data: cardData,
-      fallback: false,
-      rateLimited: false,
-    };
-
-  } catch (error) {
-    console.error('❌ OpenAI extractCardInfo error:', error);
-
-    // Rate limit (429)
-    if (error.status === 429 || error.message?.includes('rate_limit') || error.message?.includes('quota')) {
-      return {
-        success: false,
-        rateLimited: true,
-        error: 'OpenAI rate limit exceeded. Please wait a moment and try again.',
-      };
-    }
-
-    // Auth error (401)
-    if (error.status === 401 || error.message?.includes('Incorrect API key')) {
-      return {
-        success: false,
-        error: 'OpenAI API key is invalid. Please check OPENAI_API_KEY in backend/.env. Get a key at https://platform.openai.com/api-keys',
-      };
-    }
-
-    // Insufficient credits (402)
-    if (error.status === 402 || error.message?.includes('insufficient_quota')) {
-      return {
-        success: false,
-        rateLimited: true,
-        error: 'OpenAI account has insufficient credits. Please add credits at https://platform.openai.com/account/billing',
-      };
-    }
-
-    // Network or unknown error — return fallback empty card so user can fill manually
-    console.log('⚠️  Returning fallback empty card due to error:', error.message);
-    return {
-      success: true,
-      fallback: true,
-      data: {
-        name: '', email: '', phone: '',
-        company: '', job_title: '',
-        address: '', website: '',
-      },
-      error: error.message,
-    };
+    // Any other API error — return fallback so user can fill manually
+    return { success: true, fallback: true, data: emptyCard(), error: apiError.message };
   }
+
+  // ── 5. Got response — parse immediately, return, DONE ───────────────────
+  const rawText = response.choices[0]?.message?.content?.trim();
+  console.log('📝 OpenAI response:', rawText);
+
+  if (!rawText) {
+    return { success: true, fallback: true, data: emptyCard(), error: 'Empty response from OpenAI' };
+  }
+
+  const cardData = parseCardJSON(rawText);
+  console.log('✅ Extraction complete — returning data immediately (no retry)');
+
+  // ✅ RETURN RIGHT HERE — nothing else runs after a successful extraction
+  return {
+    success: true,
+    data: cardData,
+    fallback: false,
+    rateLimited: false,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const emptyCard = () => ({
+  name: '', email: '', phone: '',
+  company: '', job_title: '',
+  address: '', website: '',
+});
+
+/**
+ * Detect MIME type via magic bytes first (handles iOS HEIC files)
+ */
+const detectMimeType = (filePath, buffer) => {
+  if (buffer.length >= 12) {
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF)
+      return 'image/jpeg';
+    // PNG: 89 50 4E 47
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47)
+      return 'image/png';
+    // WebP: 52 49 46 46
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46)
+      return 'image/webp';
+    // HEIC/HEIF (iOS): 'ftyp' at byte 4
+    if (buffer.slice(4, 8).toString('ascii') === 'ftyp') {
+      console.log('⚠️  HEIC/HEIF detected — remapping to image/jpeg for OpenAI');
+      return 'image/jpeg';
+    }
+  }
+
+  const map = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.png': 'image/png',  '.webp': 'image/webp',
+    '.heic': 'image/jpeg', '.heif': 'image/jpeg',
+    '.gif': 'image/gif',   '.bmp': 'image/bmp',
+  };
+  return map[path.extname(filePath).toLowerCase()] || 'image/jpeg';
 };
 
 /**
- * Parse and clean JSON from OpenAI response
- * Handles markdown code blocks the model sometimes wraps around JSON
+ * Parse JSON from OpenAI response — strips markdown fences if present
  */
 const parseCardJSON = (text) => {
   try {
-    // Strip markdown code fences if present
     let cleaned = text
       .replace(/^```json\s*/i, '')
       .replace(/^```\s*/i, '')
       .replace(/```\s*$/i, '')
       .trim();
 
-    // Extract JSON object if there's surrounding text
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) cleaned = match[0];
 
     const parsed = JSON.parse(cleaned);
+    const f = (v) => (v == null ? '' : String(v).trim());
 
     return {
-      name:      cleanField(parsed.name),
-      email:     cleanField(parsed.email),
-      phone:     cleanField(parsed.phone),
-      company:   cleanField(parsed.company),
-      job_title: cleanField(parsed.job_title),
-      address:   cleanField(parsed.address),
-      website:   cleanField(parsed.website),
+      name:      f(parsed.name),
+      email:     f(parsed.email),
+      phone:     f(parsed.phone),
+      company:   f(parsed.company),
+      job_title: f(parsed.job_title),
+      address:   f(parsed.address),
+      website:   f(parsed.website),
     };
   } catch (err) {
-    console.error('⚠️  JSON parse failed, returning empty card. Raw text was:', text);
-    return {
-      name: '', email: '', phone: '',
-      company: '', job_title: '',
-      address: '', website: '',
-    };
+    console.error('⚠️  JSON parse failed:', err.message, '| raw:', text);
+    return emptyCard();
   }
-};
-
-const cleanField = (value) => {
-  if (value === null || value === undefined) return '';
-  return String(value).trim();
-};
-
-const getMimeType = (filePath) => {
-  const ext = path.extname(filePath).toLowerCase();
-  const map = {
-    '.jpg':  'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png':  'image/png',
-    '.webp': 'image/webp',
-    '.gif':  'image/gif',
-    '.bmp':  'image/bmp',
-  };
-  return map[ext] || 'image/jpeg';
 };
 
 module.exports = { extractCardInfo };
