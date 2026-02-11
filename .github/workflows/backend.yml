@@ -22,12 +22,13 @@ jobs:
           echo "$EC2_KEY" > ~/.ssh/key.pem
           chmod 600 ~/.ssh/key.pem
 
-          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST << 'EOF'
-            cd /home/ubuntu/business-card-api
-            git pull origin main
-            npm install --production
-            pm2 restart business-card-api || pm2 start server.js --name business-card-api
+          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            cd /home/ubuntu/business-card-api &&
+            git fetch origin &&
+            git reset --hard origin/main &&
+            npm install --production &&
+            pm2 restart business-card-api &&
             pm2 save
-          EOF
+          "
 
           rm -f ~/.ssh/key.pem
