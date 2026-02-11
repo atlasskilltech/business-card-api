@@ -9,7 +9,7 @@ const path = require('path');
 
 // @route   POST /api/cards/scan
 // @desc    Upload and scan business card
-// @access  Private
+// @access  Private neww
 router.post('/scan', authenticate, upload.single('card'), handleUploadError, async (req, res) => {
   try {
     console.log('📸 Scan card request received');
