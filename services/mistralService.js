@@ -40,27 +40,16 @@ class MistralService {
         console.log('📄 Detected mime type:', mimeType);
 
         // Prepare the prompt for business card extraction
-        const prompt = `You are an expert at extracting information from business cards. Analyze this business card image and extract the following information in JSON format ONLY (no other text):
-
-{
-  "name": "Full name of the person",
-  "email": "Email address",
-  "phone": "Phone number",
-  "company": "Company/Organization name",
-  "job_title": "Job title or position",
-  "address": "Physical address",
-  "website": "Website URL"
-}
-
-IMPORTANT RULES:
-- Return ONLY valid JSON, no markdown formatting, no explanation
-- If a field is not found, use empty string ""
-- Extract complete information accurately
-- Format phone numbers consistently
-- For websites, include full URL if available
-- Be precise and thorough
-
-Analyze the business card now:`;
+        const prompt = `Extract business card info and return JSON only:
+        {
+          "name": "",
+          "email": "",
+          "phone": "",
+          "company": "",
+          "job_title": "",
+          "address": "",
+          "website": ""
+        }`;
 
         console.log('🚀 Sending request to Mistral AI...');
         
