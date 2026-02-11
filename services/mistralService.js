@@ -5,7 +5,7 @@ class MistralService {
   constructor() {
     this.apiKey = process.env.MISTRAL_API_KEY;
     this.apiUrl = 'https://api.mistral.ai/v1/chat/completions';
-    this.model = 'pixtral-12b-2409'; // Mistral's vision model
+    this.model = 'mistral-small'; // Mistral's vision model
   }
 
   async extractCardInfo(imagePath) {
